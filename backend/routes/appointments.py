@@ -79,11 +79,26 @@ def create_appointment():
             users_collection = db['users']
             
             patient = users_collection.find_one({'_id': ObjectId(patient_id)})
-            # Find doctor by name or ID
-            doctor = users_collection.find_one({'full_name': data.get('doctor_id')}) or \
-                     users_collection.find_one({'_id': ObjectId(data.get('doctor_id'))})
+            doctor_id_str = data.get('doctor_id')
+            print(f"[v0] Looking for doctor with ID/name: {doctor_id_str}")
+            
+            # Find doctor - try multiple approaches
+            doctor = None
+            
+            # First try: by name (since doctor_id is stored as name in appointments from patient booking)
+            if doctor_id_str:
+                doctor = users_collection.find_one({'full_name': doctor_id_str})
+            
+            # Second try: as MongoDB ID
+            if not doctor and doctor_id_str:
+                try:
+                    doctor = users_collection.find_one({'_id': ObjectId(doctor_id_str)})
+                except Exception as e:
+                    print(f"[v0] ObjectId conversion failed: {e}")
+                    pass
             
             if doctor:
+                print(f"[v0] Found doctor: {doctor.get('full_name')} with ID: {doctor.get('_id')}")
                 doctor_notification = {
                     'user_id': str(doctor['_id']),
                     'appointment_id': ObjectId(appointment['_id']),
@@ -94,9 +109,14 @@ def create_appointment():
                     'created_at': datetime.utcnow(),
                     'updated_at': datetime.utcnow()
                 }
-                notifications_collection.insert_one(doctor_notification)
+                result = notifications_collection.insert_one(doctor_notification)
+                print(f"[v0] Notification created for doctor with notification ID: {result.inserted_id}")
+            else:
+                print(f"[v0] Warning: Doctor not found with ID/name: {doctor_id_str}")
         except Exception as notif_err:
             print(f"[v0] Warning: Could not create notification: {str(notif_err)}")
+            import traceback
+            traceback.print_exc()
         
         return jsonify({
             'message': 'Appointment created successfully',
@@ -211,11 +231,16 @@ def get_hospital_appointments():
             ]
         }).sort('appointment_date', -1))
         
-        # Convert ObjectId to string for JSON serialization
-        appointments = [
-            {
+        # Convert ObjectId to string for JSON serialization and fetch patient names
+        appointments = []
+        for apt in all_appointments:
+            patient_id = apt['patient_id']
+            patient_obj = users_collection.find_one({'_id': ObjectId(patient_id)}) if isinstance(patient_id, (ObjectId, str)) else None
+            patient_name = patient_obj.get('full_name', 'Unknown Patient') if patient_obj else 'Unknown Patient'
+            
+            appointments.append({
                 'id': str(apt['_id']),
-                'patient_id': str(apt['patient_id']),
+                'patient_id': patient_name,
                 'doctor_id': apt['doctor_id'],
                 'hospital_id': apt['hospital_id'],
                 'appointment_date': apt['appointment_date'],
@@ -225,9 +250,7 @@ def get_hospital_appointments():
                 'status': apt['status'],
                 'created_at': apt['created_at'].isoformat() if isinstance(apt.get('created_at'), datetime) else apt.get('created_at'),
                 'updated_at': apt['updated_at'].isoformat() if isinstance(apt.get('updated_at'), datetime) else apt.get('updated_at')
-            }
-            for apt in all_appointments
-        ]
+            })
         
         # Separate into today, upcoming and past
         today = datetime.utcnow().date().isoformat()
@@ -553,13 +576,19 @@ def get_notifications():
     try:
         db = get_db()
         user_id = request.user_id
+        print(f"[v0] Fetching notifications for user_id: {user_id}, type: {type(user_id)}")
         
         # Get notifications for this user that haven't been cleared
         notifications_collection = db['notifications']
-        notifications = list(notifications_collection.find({
-            'user_id': user_id,
+        
+        # Always search as string since we're storing user_id as string
+        query = {
+            'user_id': str(user_id),
             'cleared': False
-        }).sort('created_at', -1))
+        }
+        
+        notifications = list(notifications_collection.find(query).sort('created_at', -1))
+        print(f"[v0] Found {len(notifications)} notifications for user {user_id}")
         
         notifications_data = [
             {
@@ -573,6 +602,7 @@ def get_notifications():
             for notif in notifications
         ]
         
+        print(f"[v0] Returning {len(notifications_data)} notifications for user {user_id}")
         return jsonify({
             'notifications': notifications_data,
             'total': len(notifications_data)
@@ -580,6 +610,8 @@ def get_notifications():
     
     except Exception as e:
         print(f"[v0] Get notifications error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': f'Error fetching notifications: {str(e)}'}), 500
 
 @appointments_bp.route('/notifications/<notification_id>/clear', methods=['POST'])
@@ -607,7 +639,7 @@ def clear_notification(notification_id):
         print(f"[v0] Clear notification error: {str(e)}")
         return jsonify({'error': f'Error clearing notification: {str(e)}'}), 500
 
-@appointments_bp.route('/appointments/<appointment_id>/confirm', methods=['POST'])
+@appointments_bp.route('/<appointment_id>/confirm', methods=['POST'])
 @token_required
 def confirm_appointment(appointment_id):
     """Confirm an appointment and notify patient"""
@@ -633,7 +665,7 @@ def confirm_appointment(appointment_id):
         
         # Create notification for patient
         patient_notification = {
-            'user_id': appointment['patient_id'],
+            'user_id': str(appointment['patient_id']),
             'appointment_id': ObjectId(appointment_id),
             'message': f"Your appointment with Dr. {doctor.get('full_name', 'Doctor')} has been confirmed for {appointment.get('appointment_date')} at {appointment.get('appointment_time')}",
             'type': 'success',
@@ -644,6 +676,7 @@ def confirm_appointment(appointment_id):
         }
         
         notifications_collection.insert_one(patient_notification)
+        print(f"[v0] Confirmation notification created for patient {appointment['patient_id']}")
         
         return jsonify({
             'message': 'Appointment confirmed',
@@ -654,7 +687,7 @@ def confirm_appointment(appointment_id):
         print(f"[v0] Confirm appointment error: {str(e)}")
         return jsonify({'error': f'Error confirming appointment: {str(e)}'}), 500
 
-@appointments_bp.route('/appointments/<appointment_id>/cancel', methods=['POST'])
+@appointments_bp.route('/<appointment_id>/cancel', methods=['POST'])
 @token_required
 def cancel_appointment(appointment_id):
     """Cancel an appointment and notify the other party"""

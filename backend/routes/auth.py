@@ -398,6 +398,80 @@ def get_doctors_availability():
         print(f"[v0] Get doctors availability error: {str(e)}")
         return jsonify({'error': f'Error fetching doctors: {str(e)}'}), 500
 
+@auth_bp.route('/doctor/<doctor_id>', methods=['GET'])
+@token_required
+def get_doctor(doctor_id):
+    """Get doctor information by ID or name"""
+    try:
+        db = get_db()
+        users_collection = db['users']
+        
+        # Try to find by MongoDB ObjectId first
+        doctor = None
+        try:
+            doctor = users_collection.find_one({'_id': ObjectId(doctor_id)})
+        except:
+            pass
+        
+        # If not found, try by full_name (doctor_id might be the doctor's name)
+        if not doctor:
+            doctor = users_collection.find_one({'full_name': doctor_id, 'role': 'hospital'})
+        
+        if not doctor:
+            return jsonify({'error': 'Doctor not found'}), 404
+        
+        return jsonify({
+            'id': str(doctor['_id']),
+            'full_name': doctor.get('full_name', ''),
+            'email': doctor.get('email', ''),
+            'department': doctor.get('department', ''),
+            'staff_position': doctor.get('staff_position', ''),
+            'registration_number': doctor.get('registration_number', ''),
+            'address': doctor.get('address', '')
+        }), 200
+    
+    except Exception as e:
+        print(f"[v0] Get doctor error: {str(e)}")
+        return jsonify({'error': f'Error fetching doctor: {str(e)}'}), 500
+
+@auth_bp.route('/patient/<patient_id>', methods=['GET'])
+@token_required
+def get_patient(patient_id):
+    """Get patient information by ID"""
+    try:
+        db = get_db()
+        users_collection = db['users']
+        
+        # Try to find by MongoDB ObjectId
+        patient = None
+        try:
+            patient = users_collection.find_one({'_id': ObjectId(patient_id)})
+        except:
+            pass
+        
+        # If not found, try by full_name
+        if not patient:
+            patient = users_collection.find_one({'full_name': patient_id, 'role': 'patient'})
+        
+        if not patient:
+            return jsonify({'error': 'Patient not found'}), 404
+        
+        return jsonify({
+            'id': str(patient['_id']),
+            'full_name': patient.get('full_name', ''),
+            'email': patient.get('email', ''),
+            'phone': patient.get('phone', ''),
+            'blood_type': patient.get('blood_type', ''),
+            'address': patient.get('address', ''),
+            'date_of_birth': patient.get('date_of_birth', ''),
+            'emergency_contact': patient.get('emergency_contact', ''),
+            'emergency_phone': patient.get('emergency_phone', '')
+        }), 200
+    
+    except Exception as e:
+        print(f"[v0] Get patient error: {str(e)}")
+        return jsonify({'error': f'Error fetching patient: {str(e)}'}), 500
+
 @auth_bp.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""

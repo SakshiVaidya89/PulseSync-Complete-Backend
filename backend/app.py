@@ -1,8 +1,18 @@
+from dotenv import load_dotenv
+load_dotenv()
 from flask import Flask
 from flask_cors import CORS
 from datetime import datetime
 import os
 from pymongo import MongoClient
+# from google import genai
+# print("✅ USING NEW GOOGLE-GENAI SDK")
+# client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+# print("\nAvailable Models:")
+# for model in client.models.list():
+#     print(model.name)
+# print("\n")
 # from routes.chatbot import chatbot_bp
 # Initialize Flask app
 app = Flask(__name__)
@@ -39,11 +49,16 @@ except Exception as e:
     print(f"✗ Failed to connect to MongoDB: {e}")
     print("Make sure MongoDB is running on localhost:27017")
 
+# Store database in app context for route access
+app.db = db
+
 # Register blueprints
 from routes.auth import auth_bp
 from routes.appointments import appointments_bp
+from routes.prescriptions import prescriptions_bp
 app.register_blueprint(auth_bp)
 app.register_blueprint(appointments_bp)
+app.register_blueprint(prescriptions_bp)
 
 # Health check route
 @app.route('/health', methods=['GET'])
