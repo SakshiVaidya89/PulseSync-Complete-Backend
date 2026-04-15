@@ -42,6 +42,77 @@ def token_required(f):
 # Medicine analyzer instance
 medicine_analyzer = MedicineAnalyzer()
 
+@prescriptions_bp.route('/analyze-prescription-image', methods=['POST'])
+@token_required
+def analyze_prescription_image():
+    """
+    Accept a prescription photo, extract medicine names via Gemini Vision,
+    analyze each one, save them all, and return the full analyses.
+    Expected: multipart/form-data with field "image" (jpg/png/webp/heic)
+    """
+    try:
+        if 'image' not in request.files:
+            return jsonify({'error': 'No image file provided'}), 400
+
+        image_file = request.files['image']
+        if image_file.filename == '':
+            return jsonify({'error': 'Empty filename'}), 400
+
+        mime_type = image_file.content_type or 'image/jpeg'
+        allowed_types = {'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'}
+        if mime_type not in allowed_types:
+            return jsonify({'error': f'Unsupported image type: {mime_type}'}), 400
+
+        image_bytes = image_file.read()
+        if len(image_bytes) > 10 * 1024 * 1024:  # 10 MB cap
+            return jsonify({'error': 'Image too large. Please upload under 10 MB.'}), 400
+
+        # Step 1: Extract medicine names from the image
+        medicine_names = medicine_analyzer.extract_medicines_from_image(image_bytes, mime_type)
+
+        if not medicine_names:
+            return jsonify({'error': 'No medicines found in the prescription image'}), 422
+
+        # Step 2: Analyze each medicine and save to DB
+        # Use a short delay between calls to avoid Gemini rate limits
+        import time
+        db = get_db()
+        prescription_model = PrescriptionModel(db)
+        user_id = request.user_id
+
+        analyses = []
+        failed = []
+
+        for i, name in enumerate(medicine_names):
+            if i > 0:
+                time.sleep(1)  # 1s gap between Gemini calls to avoid rate limits
+            for attempt in range(3):
+                try:
+                    analysis = medicine_analyzer.analyze_medicine(name)
+                    prescription_model.save_prescription(user_id, analysis)
+                    analyses.append(analysis)
+                    break
+                except Exception as e:
+                    print(f"Attempt {attempt+1} failed for '{name}': {str(e)}")
+                    if attempt < 2:
+                        time.sleep(2)
+                    else:
+                        failed.append(name)
+
+        return jsonify({
+            'medicines_found': medicine_names,
+            'analyses': analyses,
+            'failed': failed,
+            'count': len(analyses),
+        }), 200
+
+    except ValueError as e:
+        return jsonify({'error': str(e), 'type': 'AI_ERROR'}), 503
+    except Exception as e:
+        print(f"Error processing prescription image: {str(e)}")
+        return jsonify({'error': 'Failed to process prescription image'}), 500
+
+
 @prescriptions_bp.route('/analyze', methods=['POST'])
 @token_required
 def analyze_medicine():
@@ -68,7 +139,10 @@ def analyze_medicine():
         return jsonify(analysis), 200
         
     except ValueError as e:
-        return jsonify({'error': str(e)}), 400
+        return jsonify({
+        'error': str(e),
+        'type': 'AI_ERROR'
+    }), 503
     except Exception as e:
         print(f"Error analyzing medicine: {str(e)}")
         return jsonify({'error': 'Failed to analyze medicine'}), 500

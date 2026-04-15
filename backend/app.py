@@ -5,6 +5,7 @@ from flask_cors import CORS
 from datetime import datetime
 import os
 from pymongo import MongoClient
+
 # from google import genai
 # print("✅ USING NEW GOOGLE-GENAI SDK")
 # client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
@@ -16,6 +17,7 @@ from pymongo import MongoClient
 # from routes.chatbot import chatbot_bp
 # Initialize Flask app
 app = Flask(__name__)
+
 
 MONGO_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/pulsesync')
 JWT_SECRET = os.getenv('JWT_SECRET', 'your-secret-key-change-this')
@@ -77,7 +79,14 @@ def server_error(error):
 @app.errorhandler(400)
 def bad_request(error):
     return {'error': 'Bad request'}, 400
-
+from routes.places import places_bp
+app.register_blueprint(places_bp)
+from routes.chatbot import chatbot_bp
+app.register_blueprint(chatbot_bp)
+from routes.reminders import reminders_bp
+app.register_blueprint(reminders_bp)
+# with app.app_context():
+#     get_scheduler()
 if __name__ == '__main__':
     print("\n" + "="*60)
     print("Starting PulseSync Backend...")
@@ -90,3 +99,4 @@ if __name__ == '__main__':
     print("✓ Press Ctrl+C to stop the server\n")
     
     app.run(host='0.0.0.0', port=PORT, debug=True)
+
